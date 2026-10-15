@@ -8,7 +8,7 @@ type FileResult = {
   stats?: { images_optimized?: number; target_reached?: boolean; attempt_scale?: number };
   download_url?: string | null;
 };
-type Job = { job_id: string; status: string; progress: number; message: string; files: FileResult[]; error?: string | null };
+type Job = { job_id: string; status: string; progress: number; progress_fine?: number; message: string; detail?: string; files: FileResult[]; error?: string | null };
 type Preset = 'high' | 'balanced' | 'smallest';
 
 const MAX_FILES = 10;
@@ -51,6 +51,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const [phase, setPhase] = useState<'idle' | 'uploading' | 'processing'>('idle');
+  // Target value reported by backend (fine-grained), and the eased value actually painted.
+  const [targetPct, setTargetPct] = useState(0);
+  const [displayPct, setDisplayPct] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   const [health, setHealth] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -58,6 +61,8 @@ export default function App() {
   const [healthNonce, setHealthNonce] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const pollRef = useRef<number | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+  const finishRef = useRef<(data: Job) => void>(() => {});
 
   const checkHealth = useCallback(() => {
     setHealth('checking');
@@ -67,7 +72,10 @@ export default function App() {
 
   useEffect(() => {
     checkHealth();
-    return () => { if (pollRef.current) window.clearInterval(pollRef.current); };
+    return () => {
+      if (sseRef.current) { try { sseRef.current.close(); } catch { /* noop */ } sseRef.current = null; }
+      if (pollRef.current) window.clearInterval(pollRef.current);
+    };
   }, [checkHealth, healthNonce]);
 
   // Save a backend origin at runtime so a deployed build can be re-pointed
@@ -99,37 +107,74 @@ export default function App() {
   const onInput = (event: ChangeEvent<HTMLInputElement>) => { if (event.target.files) addFiles(event.target.files); event.target.value = ''; };
   const onDrop = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragging(false); if (event.dataTransfer.files) addFiles(event.dataTransfer.files); };
 
+  const stopWatchers = () => {
+    if (sseRef.current) { try { sseRef.current.close(); } catch { /* noop */ } sseRef.current = null; }
+    if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
+  };
+
+  // Painted value eases toward the latest backend value via CSS transition,
+  // so the bar glides between SSE/poll updates.
+  useEffect(() => {
+    if (!busy || displayPct >= targetPct - 0.05) return;
+    const id = window.setTimeout(() => setDisplayPct(targetPct), 50);
+    return () => window.clearTimeout(id);
+  }, [busy, targetPct, displayPct]);
+
+  const handleJobUpdate = (data: Job) => {
+    setPhase('processing');
+    setJob(data);
+    const fine = typeof data.progress_fine === 'number' ? data.progress_fine : data.progress;
+    // Monotonic combined scale: upload occupied 0–15, processing eases 15–100.
+    const combined = 15 + (Math.min(100, Math.max(0, fine)) * 0.85);
+    setTargetPct(prev => Math.max(prev, Math.round(combined * 10) / 10));
+    if (['complete', 'error'].includes(data.status)) {
+      setTargetPct(100);
+      setDisplayPct(100);
+      setBusy(false);
+      setPhase('idle');
+      stopWatchers();
+    }
+  };
+  finishRef.current = handleJobUpdate;
+
   const pollJob = (jobId: string) => {
-    if (pollRef.current) window.clearInterval(pollRef.current);
+    stopWatchers();
+    // Fast poll fallback (4x/sec); SSE below gives true push updates.
     const poll = async () => {
       try {
         const response = await fetch(apiUrl(`/api/jobs/${jobId}`));
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || 'Unable to get job status.');
-        setPhase('processing');
-        setJob(data as Job);
-        if (['complete', 'error'].includes(data.status)) {
-          setBusy(false);
-          setPhase('idle');
-          if (pollRef.current) window.clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
+        finishRef.current(data as Job);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not refresh progress.');
         setBusy(false);
         setPhase('idle');
-        if (pollRef.current) window.clearInterval(pollRef.current);
-        pollRef.current = null;
+        stopWatchers();
       }
     };
     void poll();
-    pollRef.current = window.setInterval(poll, 1000);
+    pollRef.current = window.setInterval(poll, 250);
+    // Live stream: backend pushes fine-grained progress ~8x/sec.
+    try {
+      const es = new EventSource(apiUrl(`/api/jobs/${jobId}/events`));
+      sseRef.current = es;
+      es.onmessage = (event) => {
+        try { finishRef.current(JSON.parse(event.data) as Job); }
+        catch { /* ignore malformed chunk */ }
+      };
+      es.onerror = () => {
+        // Keep the fast poll running; close the broken stream so it can retry next job.
+        try { es.close(); } catch { /* noop */ }
+        if (sseRef.current === es) sseRef.current = null;
+      };
+    } catch { /* EventSource unavailable: fast poll covers updates */ }
   };
 
   const startCompression = () => {
     if (!files.length || busy) return;
     if (targetEnabled && (!Number.isFinite(Number(targetMb)) || Number(targetMb) <= 0)) { setError('Enter a target size greater than 0 MB.'); return; }
-    setError(''); setBusy(true); setJob(null); setUploadPct(0); setPhase('uploading');
+    setError(''); setBusy(true); setJob(null); setUploadPct(0); setTargetPct(0); setDisplayPct(0); setPhase('uploading');
     const body = new FormData(); files.forEach(file => body.append('files', file));
     body.append('preset', preset);
     if (targetEnabled) body.append('target_mb', targetMb);
@@ -137,7 +182,13 @@ export default function App() {
     xhr.open('POST', apiUrl('/api/jobs'));
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
-        setUploadPct(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+        // Reserve 0–15 for upload so the bar never jumps backwards when
+        // backend processing progress (also 0–100) takes over.
+        const raw = Math.min(99, Math.round((event.loaded / event.total) * 100));
+        setUploadPct(raw);
+        const mapped = Math.round(raw * 0.15 * 10) / 10;
+        setTargetPct(mapped);
+        setDisplayPct(mapped);
       }
     };
     xhr.onload = () => {
@@ -145,6 +196,9 @@ export default function App() {
         const data = JSON.parse(xhr.responseText || '{}');
         if (xhr.status < 200 || xhr.status >= 300) throw new Error(data.detail || 'Upload failed.');
         setUploadPct(100);
+        // Upload done: ease from 15 → live backend progress (15 + fine*0.85).
+        setTargetPct(15);
+        setDisplayPct(15);
         setPhase('processing');
         pollJob(data.job_id);
       } catch (e) {
@@ -157,8 +211,8 @@ export default function App() {
 
   const reset = async () => {
     if (job?.job_id) { try { await fetch(apiUrl(`/api/jobs/${job.job_id}`), { method: 'DELETE' }); } catch { /* best-effort cleanup */ } }
-    if (pollRef.current) window.clearInterval(pollRef.current);
-    pollRef.current = null; setJob(null); setFiles([]); setError(''); setBusy(false); setUploadPct(0); setPhase('idle');
+    stopWatchers();
+    pollRef.current = null; setJob(null); setFiles([]); setError(''); setBusy(false); setUploadPct(0); setTargetPct(0); setDisplayPct(0); setPhase('idle');
   };
 
   const completed = job?.files.filter(f => f.status === 'complete') ?? [];
@@ -211,11 +265,11 @@ export default function App() {
       <button className="primary-button" onClick={startCompression} disabled={!files.length || busy || health !== 'online'}>{busy ? <><RefreshCw className="spin" size={18}/> Compressing your files…</> : <>Compress PowerPoint files <ArrowDownToLine size={18}/></>}<span>{files.length > 0 && !busy ? `${files.length} ${files.length === 1 ? 'file' : 'files'}` : ''}</span></button>
       {busy && <div className="compress-progress" aria-live="polite">
         <div className="compress-progress-top">
-          <span>{phase === 'uploading' ? 'Uploading files…' : `Compressing… ${job?.message || 'Working on your files'}`}</span>
-          <strong>{phase === 'uploading' ? `${uploadPct}%` : `${job?.progress ?? 0}%`}</strong>
+          <span>{phase === 'uploading' ? `Uploading files… ${uploadPct}%` : `Compressing… ${job?.detail || job?.message || 'Working on your files'}`}</span>
+          <strong>{Math.round(displayPct)}%</strong>
         </div>
-        <div className="compress-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={phase === 'uploading' ? uploadPct : (job?.progress ?? 0)}>
-          <div className={`compress-progress-fill ${phase === 'uploading' && uploadPct <= 0 ? 'indeterminate' : ''}`} style={phase === 'uploading' && uploadPct <= 0 ? undefined : { width: `${phase === 'uploading' ? uploadPct : (job?.progress ?? 0)}%` }} />
+        <div className="compress-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(displayPct)}>
+          <div className={`compress-progress-fill smooth ${phase === 'uploading' && uploadPct <= 0 && displayPct <= 0 ? 'indeterminate' : ''}`} style={phase === 'uploading' && uploadPct <= 0 && displayPct <= 0 ? undefined : { width: `${displayPct}%` }} />
         </div>
       </div>}
       <p className="safe-note"><LockKeyhole size={13}/> Files are processed by your local backend and automatically cleaned up after the retention period.</p>

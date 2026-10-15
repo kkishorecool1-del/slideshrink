@@ -8,3 +8,4 @@
 .compress-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#7d7bee,#5b59d8);border-radius:10px;transition:width .25s ease}
 .compress-progress-fill.indeterminate{width:40%!important;animation:compress-slide 1.1s ease-in-out infinite alternate}
 @keyframes compress-slide{from{margin-left:-10%}to{margin-left:70%}}
+.compress-progress-fill.smooth{transition:width .3s linear}

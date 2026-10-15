@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import re
 import shutil
@@ -11,11 +12,11 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
@@ -70,7 +71,9 @@ class Job:
     created_at: float
     status: str = "queued"
     progress: int = 0
+    progress_fine: float = 0.0
     message: str = "Waiting to start"
+    detail: str = ""
     files: list[FileResult] = field(default_factory=list)
     error: str | None = None
     work_dir: str = ""
@@ -184,7 +187,7 @@ def optimize_image(raw: bytes, suffix: str, preset: str, scale: float = 1.0) -> 
         return raw, "image could not be safely decoded; original retained"
 
 
-def compress_package(source: Path, output: Path, preset: str, target_bytes: int | None) -> dict[str, Any]:
+def compress_package(source: Path, output: Path, preset: str, target_bytes: int | None, on_entry: Callable[[int, int, str], None] | None = None) -> dict[str, Any]:
     """Repack PPTX and optimize raster media. Target size triggers progressively stronger attempts."""
     source_bytes = source.stat().st_size
     attempts = [1.0]
@@ -193,17 +196,19 @@ def compress_package(source: Path, output: Path, preset: str, target_bytes: int 
     best_path = output.with_suffix(".best.pptx")
     best_size = source_bytes + 1
     best_stats: dict[str, Any] = {}
+    total_steps = max(1, len(attempts))
     try:
-        for scale in attempts:
+        for attempt_idx, scale in enumerate(attempts):
             attempt_path = output.with_name(output.stem + f".attempt{int(scale*100)}.pptx")
             zf, infos = inspect_pptx(source)
             optimized = 0
             original_media_bytes = 0
             output_media_bytes = 0
+            total_entries = max(1, len(infos))
             try:
                 with zf, zipfile.ZipFile(attempt_path, "w") as zout:
                     zout.comment = zf.comment
-                    for info in infos:
+                    for entry_idx, info in enumerate(infos):
                         data = zf.read(info.filename)
                         lower = info.filename.lower()
                         if lower.startswith("ppt/media/") and Path(lower).suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"} and not info.is_dir():
@@ -222,6 +227,8 @@ def compress_package(source: Path, output: Path, preset: str, target_bytes: int 
                         clone.external_attr = info.external_attr
                         clone.create_system = info.create_system
                         zout.writestr(clone, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+                        if on_entry is not None and (entry_idx % 2 == 0 or entry_idx + 1 == total_entries):
+                            on_entry(entry_idx + 1, total_entries, f"Pass {attempt_idx + 1}/{total_steps} · entry {entry_idx + 1}/{total_entries}")
             except Exception:
                 attempt_path.unlink(missing_ok=True)
                 raise
@@ -267,7 +274,9 @@ def job_public(job: Job) -> dict[str, Any]:
         "job_id": job.id,
         "status": job.status,
         "progress": job.progress,
+        "progress_fine": round(job.progress_fine, 2),
         "message": job.message,
+        "detail": job.detail,
         "preset": job.preset,
         "target_mb": job.target_mb,
         "created_at": job.created_at,
@@ -302,8 +311,17 @@ async def process_job(job: Job) -> None:
             output = Path(job.work_dir) / "output" / output_name
             output.parent.mkdir(parents=True, exist_ok=True)
             target_bytes = int(job.target_mb * 1024 * 1024) if job.target_mb else None
+            file_base = (index / count) * 100.0
+            file_span = 100.0 / count
+
+            def on_entry(done: int, total: int, label: str, _fb: float = file_base, _fs: float = file_span) -> None:
+                frac = min(1.0, max(0.0, done / max(1, total)))
+                job.progress_fine = round(_fb + _fs * frac, 2)
+                job.progress = int(job.progress_fine)
+                job.detail = label
+
             try:
-                stats = await asyncio.to_thread(compress_package, source, output, job.preset, target_bytes)
+                stats = await asyncio.to_thread(compress_package, source, output, job.preset, target_bytes, on_entry)
                 item.output_bytes = output.stat().st_size
                 item.saved_bytes = max(0, item.original_bytes - item.output_bytes)
                 item.saved_percent = round((item.saved_bytes / item.original_bytes * 100) if item.original_bytes else 0, 2)
@@ -315,6 +333,8 @@ async def process_job(job: Job) -> None:
                 item.status = "error"
                 item.message = str(exc)[:300] or "Compression failed"
             job.progress = int(((index + 1) / count) * 100)
+            job.progress_fine = float(job.progress)
+            job.detail = f"Finished {item.original_name} ({index + 1}/{count})"
         if all(f.status == "error" for f in job.files):
             job.status = "error"
             job.error = "All files failed to process. Review the file-level error messages."
@@ -418,6 +438,33 @@ async def get_job(job_id: str) -> dict[str, Any]:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found or expired.")
     return job_public(job)
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def job_events(job_id: str) -> StreamingResponse:
+    await cleanup_old_jobs()
+    if job_id not in JOBS:
+        raise HTTPException(status_code=404, detail="Job not found or expired.")
+
+    async def stream() -> Any:
+        last = ""
+        # Push fine-grained progress ~8x/sec until the job reaches a terminal state.
+        while True:
+            job = JOBS.get(job_id)
+            if not job:
+                yield "event: error\ndata: {\"detail\": \"Job not found or expired.\"}\n\n"
+                break
+            payload = json.dumps(job_public(job))
+            if payload != last:
+                yield f"data: {payload}\n\n"
+                last = payload
+            if job.status in {"complete", "error"}:
+                break
+            await asyncio.sleep(0.12)
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no",
+    })
 
 
 @app.get("/api/jobs/{job_id}/files/{file_index}/download")
