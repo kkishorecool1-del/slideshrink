@@ -1,0 +1,29 @@
+# render-simple.yaml - Deploy ENTIRE app (frontend + backend) to Render.com
+# 1. Push this repo to GitHub
+# 2. Go to https://dashboard.render.com → New → Web Service
+# 3. Connect GitHub repo
+# 4. Render detects this file automatically → click "Apply"
+# 5. Done! Your app runs at https://slideshrink-xxxx.onrender.com
+
+services:
+  - type: web
+    name: slideshrink
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: SLIDESHRINK_CORS_ORIGINS
+        value: "*"  # Allow all origins (simplest for testing)
+      - key: SLIDESHRINK_DATA_DIR
+        value: /var/data/slideshrink
+      - key: SLIDESHRINK_JOB_TTL_SECONDS
+        value: "3600"
+      - key: SLIDESHRINK_MAX_UPLOAD_BYTES
+        value: "104857600"
+    disk:
+      name: slideshrink-data
+      mountPath: /var/data/slideshrink
+      sizeGB: 1
+    healthCheckPath: /api/health
+    autoDeploy: true
+    # Free tier: spins down after 15 min inactivity, cold start ~30s
+    # Paid ($7/mo): always on, no cold starts

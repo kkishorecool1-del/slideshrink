@@ -1,0 +1,27 @@
+INFO:     Started server process [50548]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:56083 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56084 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56085 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56086 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56087 - "GET /assets/index-CzujrGcC.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56109 - "GET /download/3a7ac445b3414cadb793ae2b0827c2a8/82e173ef_test_deck-compressed.pptx HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56112 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56122 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56146 - "POST /api/jobs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56148 - "GET /api/jobs/f12797abd3dd468da420e2310bcec982 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56149 - "GET /api/jobs/f12797abd3dd468da420e2310bcec982/files/0/download HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56212 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56213 - "GET /assets/index-DdY6Gjbe.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56212 - "GET /assets/index-CzujrGcC.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56213 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56213 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56240 - "POST /api/jobs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56240 - "GET /api/jobs/da5e15c2a15d4c6a8963fef8eeef7b2f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56240 - "GET /api/jobs/da5e15c2a15d4c6a8963fef8eeef7b2f HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [50548]

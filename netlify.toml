@@ -1,0 +1,31 @@
+[build]
+  command = "cd frontend && npm ci && npm run build"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Redirect API calls to the external backend
+# Set VITE_API_BASE in Netlify UI (Site settings → Environment variables)
+# to your backend URL, e.g. https://slideshrink-backend.onrender.com
+[[redirects]]
+  from = "/api/*"
+  to = "${VITE_API_BASE}/api/:splat"
+  status = 200
+  force = false
+  conditions = {Role = ["admin", "editor"]}
+
+# SPA fallback for React Router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
