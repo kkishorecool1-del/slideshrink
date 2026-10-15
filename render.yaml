@@ -1,4 +1,4 @@
-# render-simple.yaml - Deploy ENTIRE app (frontend + backend) to Render.com
+# render.yaml - Deploy ENTIRE app (frontend + backend) to Render.com
 # 1. Push this repo to GitHub
 # 2. Go to https://dashboard.render.com → New → Web Service
 # 3. Connect GitHub repo
@@ -9,21 +9,24 @@ services:
   - type: web
     name: slideshrink
     runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
     envVars:
       - key: SLIDESHRINK_CORS_ORIGINS
-        value: "*"  # Allow all origins (simplest for testing)
+        value: "*"
       - key: SLIDESHRINK_DATA_DIR
-        value: /var/data/slideshrink
+        value: /tmp/slideshrink-data
       - key: SLIDESHRINK_JOB_TTL_SECONDS
         value: "3600"
       - key: SLIDESHRINK_MAX_UPLOAD_BYTES
         value: "104857600"
-    disk:
-      name: slideshrink-data
-      mountPath: /var/data/slideshrink
-      sizeGB: 1
-    healthCheckPath: /api/health
-    autoDeploy: true
+    # NOTE: Free tier has ephemeral storage (no disk). Uploads/jobs are kept
+    # for SLIDESHRINK_JOB_TTL_SECONDS then cleaned up — fine for this app.
+    # For persistent disk, upgrade to Starter ($7/mo) and add:
+    # disk:
+    #   name: slideshrink-data
+    #   mountPath: /var/data/slideshrink
+    #   sizeGB: 1
     # Free tier: spins down after 15 min inactivity, cold start ~30s
-    # Paid ($7/mo): always on, no cold starts
