@@ -49,6 +49,8 @@ export default function App() {
   const [targetMb, setTargetMb] = useState('10');
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'processing'>('idle');
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   const [health, setHealth] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -104,15 +106,18 @@ export default function App() {
         const response = await fetch(apiUrl(`/api/jobs/${jobId}`));
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || 'Unable to get job status.');
+        setPhase('processing');
         setJob(data as Job);
         if (['complete', 'error'].includes(data.status)) {
           setBusy(false);
+          setPhase('idle');
           if (pollRef.current) window.clearInterval(pollRef.current);
           pollRef.current = null;
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not refresh progress.');
         setBusy(false);
+        setPhase('idle');
         if (pollRef.current) window.clearInterval(pollRef.current);
         pollRef.current = null;
       }
@@ -121,27 +126,39 @@ export default function App() {
     pollRef.current = window.setInterval(poll, 1000);
   };
 
-  const startCompression = async () => {
+  const startCompression = () => {
     if (!files.length || busy) return;
     if (targetEnabled && (!Number.isFinite(Number(targetMb)) || Number(targetMb) <= 0)) { setError('Enter a target size greater than 0 MB.'); return; }
-    setError(''); setBusy(true); setJob(null);
+    setError(''); setBusy(true); setJob(null); setUploadPct(0); setPhase('uploading');
     const body = new FormData(); files.forEach(file => body.append('files', file));
     body.append('preset', preset);
     if (targetEnabled) body.append('target_mb', targetMb);
-    try {
-      const response = await fetch(apiUrl('/api/jobs'), { method: 'POST', body });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Upload failed.');
-      pollJob(data.job_id);
-    } catch (e) {
-      setBusy(false); setError(e instanceof Error ? e.message : 'Could not start compression.');
-    }
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', apiUrl('/api/jobs'));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        setUploadPct(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      }
+    };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText || '{}');
+        if (xhr.status < 200 || xhr.status >= 300) throw new Error(data.detail || 'Upload failed.');
+        setUploadPct(100);
+        setPhase('processing');
+        pollJob(data.job_id);
+      } catch (e) {
+        setBusy(false); setPhase('idle'); setError(e instanceof Error ? e.message : 'Could not start compression.');
+      }
+    };
+    xhr.onerror = () => { setBusy(false); setPhase('idle'); setError('Could not start compression. Check the backend connection.'); };
+    xhr.send(body);
   };
 
   const reset = async () => {
     if (job?.job_id) { try { await fetch(apiUrl(`/api/jobs/${job.job_id}`), { method: 'DELETE' }); } catch { /* best-effort cleanup */ } }
     if (pollRef.current) window.clearInterval(pollRef.current);
-    pollRef.current = null; setJob(null); setFiles([]); setError(''); setBusy(false);
+    pollRef.current = null; setJob(null); setFiles([]); setError(''); setBusy(false); setUploadPct(0); setPhase('idle');
   };
 
   const completed = job?.files.filter(f => f.status === 'complete') ?? [];
@@ -192,6 +209,15 @@ export default function App() {
         <small>The address is remembered in this browser only. The backend must allow this origin (<code>SLIDESHRINK_CORS_ORIGINS</code>).</small>
       </div></div>}
       <button className="primary-button" onClick={startCompression} disabled={!files.length || busy || health !== 'online'}>{busy ? <><RefreshCw className="spin" size={18}/> Compressing your files…</> : <>Compress PowerPoint files <ArrowDownToLine size={18}/></>}<span>{files.length > 0 && !busy ? `${files.length} ${files.length === 1 ? 'file' : 'files'}` : ''}</span></button>
+      {busy && <div className="compress-progress" aria-live="polite">
+        <div className="compress-progress-top">
+          <span>{phase === 'uploading' ? 'Uploading files…' : `Compressing… ${job?.message || 'Working on your files'}`}</span>
+          <strong>{phase === 'uploading' ? `${uploadPct}%` : `${job?.progress ?? 0}%`}</strong>
+        </div>
+        <div className="compress-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={phase === 'uploading' ? uploadPct : (job?.progress ?? 0)}>
+          <div className={`compress-progress-fill ${phase === 'uploading' && uploadPct <= 0 ? 'indeterminate' : ''}`} style={phase === 'uploading' && uploadPct <= 0 ? undefined : { width: `${phase === 'uploading' ? uploadPct : (job?.progress ?? 0)}%` }} />
+        </div>
+      </div>}
       <p className="safe-note"><LockKeyhole size={13}/> Files are processed by your local backend and automatically cleaned up after the retention period.</p>
     </section>
 
