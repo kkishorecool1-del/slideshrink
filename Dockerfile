@@ -29,4 +29,9 @@ ENV SLIDESHRINK_DATA_DIR=/app/backend/data
 WORKDIR /app/backend
 # HF exposes port 7860 by default; Render (and similar) provide $PORT.
 EXPOSE 7860
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-7860}"]
+# Fly machines auto-stop when idle; first request wakes in ~2-5s. Keep a single
+# uvicorn worker: job state lives in-memory (multi-worker would split state),
+# while intra-job file parallelism is handled by SLIDESHRINK_MAX_WORKERS threads.
+# Limit max concurrent HTTP requests so sudden bursts queue instead of OOMing.
+ENV UVICORN_LIMIT_CONCURRENCY=20
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-7860} --workers 1 --limit-concurrency ${UVICORN_LIMIT_CONCURRENCY:-20} --timeout-keep-alive 75"]

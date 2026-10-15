@@ -1,45 +1,40 @@
-# SIMPLE DEPLOY - Render.com (Entire app in ONE service)
+# Deploy — Fly.io (recommended, Mumbai) or Render
 
-## 2-Minute Setup
+## Option A: Fly.io — fastest for Indian users (recommended)
 
-1. **Push to GitHub**
-   ```bash
-   cd /Users/ekcsm036/Desktop/websites/PPT/slideshrink
-   git init && git add . && git commit -m "deploy"
-   # Create repo at github.com/new, then:
-   git remote add origin https://github.com/YOURUSER/slideshrink.git
-   git push -u origin main
-   ```
+Single service: same Docker image serves the React frontend + FastAPI API on one URL. No CORS, no split deploy.
 
-2. **Deploy to Render**
-   - Go to https://dashboard.render.com → **New → Web Service**
-   - Connect your GitHub repo `slideshrink`
-   - Render detects `render-simple.yaml` → click **Apply**
-   - Wait 2-3 minutes for build
+```bash
+# 1. Install + login (once)
+curl -L https://fly.io/install.sh | sh
+flyctl auth login
 
-3. **Done!** 
-   - Your app: `https://slideshrink-xxxx.onrender.com`
-   - Frontend + API both work on same URL
-   - Free tier included (spins down after 15 min idle)
+# 2. Launch from repo ROOT (reuses fly.toml: app=slideshrink, region=bom/Mumbai)
+cd /Users/ekcsm036/Desktop/websites/PPT/slideshrink
+flyctl launch --no-deploy
+# - app name: slideshrink (or slideshrink-xyz if taken)
+# - region: bom
+# - Postgres/Redis: NO
 
-## That's it. No Netlify, no separate backend, no CORS config.
+# 3. Deploy
+flyctl deploy
 
----
+# 4. Open
+flyctl open
+```
 
-## Why not Netlify?
-- Netlify Functions = Node.js only (your backend is Python/FastAPI)
-- 6 MB upload limit (your app needs 100 MB)
-- 26 second timeout (compression takes 30+ seconds)
-- No persistent disk (your app stores temp files)
+Your app: `https://slideshrink.fly.dev` (or your chosen name).
+Health: `https://slideshrink.fly.dev/api/health` → `{"status":"ok",...}`.
 
----
+**Notes**
+- Machine: `shared-cpu-1x`, 1024MB (fits free allowance). Auto-stops when idle, wakes in ~2–5s on next request.
+- Jobs are ephemeral (`/tmp`, auto-cleaned after `SLIDESHRINK_JOB_TTL_SECONDS`). For persistence across deploys: `flyctl volumes create slideshrink_data --size 1 --region bom`, then uncomment `[[mounts]]` in `fly.toml` + set `SLIDESHRINK_DATA_DIR=/var/data/slideshrink`.
+- Compression parallelism: `SLIDESHRINK_MAX_WORKERS=3` (env in `fly.toml`) — files in one job compress concurrently.
+- Frontend + API are same-origin, so `VITE_API_BASE` / CORS are not needed.
 
-## Other "All-in-One" Options (if not Render)
+## Option B: Render (current setup, slower free tier)
 
-| Platform | Command | Free Tier |
-|----------|---------|-----------|
-| **Railway** | `railway up` (from root) | $5 credit/mo |
-| **Fly.io** | `flyctl launch` (from root) | 3 VMs free |
-| **Hugging Face** | New Space → Docker | Free CPU |
-
-All use your existing `Dockerfile` which builds frontend + backend together.
+1. Push to GitHub (auto-deploys via `render.yaml`).
+2. Dashboard → New → Web Service → connect repo → Apply.
+3. App: `https://slideshrink-xxxx.onrender.com`.
+4. Free tier: 0.1 shared CPU + sleeps after 15 min idle — expect 5–15× slower compression vs Fly/local.

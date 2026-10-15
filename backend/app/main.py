@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import io
 import json
 import os
@@ -30,6 +31,10 @@ MAX_ZIP_ENTRIES = int(os.environ.get("SLIDESHRINK_MAX_ZIP_ENTRIES", 5000))
 MAX_UNCOMPRESSED_BYTES = int(os.environ.get("SLIDESHRINK_MAX_UNCOMPRESSED_BYTES", 1024 * 1024 * 1024))
 MAX_SINGLE_ENTRY_BYTES = int(os.environ.get("SLIDESHRINK_MAX_ENTRY_BYTES", 250 * 1024 * 1024))
 JOB_TTL_SECONDS = int(os.environ.get("SLIDESHRINK_JOB_TTL_SECONDS", 3600))
+# Parallel file compression within one job (CPU-bound Pillow work). Clamp to
+# [1, 4]: more workers help multi-file jobs, but each worker holds a full
+# decoded image in memory — 1024MB VMs stay safe at <= 3.
+MAX_WORKERS = max(1, min(4, int(os.environ.get("SLIDESHRINK_MAX_WORKERS", 3))))
 ALLOWED_PRESETS = {"high", "balanced", "smallest"}
 
 PRESETS: dict[str, dict[str, Any]] = {
@@ -298,43 +303,61 @@ def job_public(job: Job) -> dict[str, Any]:
     }
 
 
+def _compress_one_file(job: Job, index: int, count: int) -> None:
+    """Compress a single file of a job (runs in a worker thread)."""
+    item = job.files[index]
+    item.status = "processing"
+    item.message = "Inspecting and optimizing package…"
+    source = Path(job.work_dir) / "input" / item.stored_name
+    output_name = f"{index:02d}_{Path(item.stored_name).stem}_compressed.pptx"
+    output = Path(job.work_dir) / "output" / output_name
+    output.parent.mkdir(parents=True, exist_ok=True)
+    target_bytes = int(job.target_mb * 1024 * 1024) if job.target_mb else None
+    file_base = (index / count) * 100.0
+    file_span = 100.0 / count
+
+    def on_entry(done: int, total: int, label: str, _fb: float = file_base, _fs: float = file_span) -> None:
+        frac = min(1.0, max(0.0, done / max(1, total)))
+        # Only ever move this file's slice of the bar forward (threads race here).
+        val = round(_fb + _fs * frac, 2)
+        if val > job.progress_fine:
+            job.progress_fine = val
+            job.progress = int(val)
+            job.detail = f"{item.original_name}: {label}"
+
+    try:
+        stats = compress_package(source, output, job.preset, target_bytes, on_entry)
+        item.output_bytes = output.stat().st_size
+        item.saved_bytes = max(0, item.original_bytes - item.output_bytes)
+        item.saved_percent = round((item.saved_bytes / item.original_bytes * 100) if item.original_bytes else 0, 2)
+        item.output_path = str(output)
+        item.stats = stats
+        item.status = "complete"
+        item.message = stats.get("message", "Compression complete")
+    except Exception as exc:
+        item.status = "error"
+        item.message = str(exc)[:300] or "Compression failed"
+
+
 async def process_job(job: Job) -> None:
     job.status = "processing"
     try:
         count = len(job.files)
+        job.message = f"Compressing {count} file{'s' if count != 1 else ''}…"
+        # Bounded parallelism: files compress concurrently (CPU-bound, so cap
+        # at MAX_WORKERS threads), but progress reporting stays ordered.
+        workers = max(1, min(MAX_WORKERS, count))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            loop = asyncio.get_running_loop()
+            await asyncio.gather(*[
+                loop.run_in_executor(pool, _compress_one_file, job, index, count)
+                for index in range(count)
+            ])
         for index, item in enumerate(job.files):
-            item.status = "processing"
-            item.message = "Inspecting and optimizing package…"
-            job.message = f"Compressing {index + 1} of {count}: {item.original_name}"
-            source = Path(job.work_dir) / "input" / item.stored_name
-            output_name = f"{index:02d}_{Path(item.stored_name).stem}_compressed.pptx"
-            output = Path(job.work_dir) / "output" / output_name
-            output.parent.mkdir(parents=True, exist_ok=True)
-            target_bytes = int(job.target_mb * 1024 * 1024) if job.target_mb else None
-            file_base = (index / count) * 100.0
-            file_span = 100.0 / count
-
-            def on_entry(done: int, total: int, label: str, _fb: float = file_base, _fs: float = file_span) -> None:
-                frac = min(1.0, max(0.0, done / max(1, total)))
-                job.progress_fine = round(_fb + _fs * frac, 2)
-                job.progress = int(job.progress_fine)
-                job.detail = label
-
-            try:
-                stats = await asyncio.to_thread(compress_package, source, output, job.preset, target_bytes, on_entry)
-                item.output_bytes = output.stat().st_size
-                item.saved_bytes = max(0, item.original_bytes - item.output_bytes)
-                item.saved_percent = round((item.saved_bytes / item.original_bytes * 100) if item.original_bytes else 0, 2)
-                item.output_path = str(output)
-                item.stats = stats
-                item.status = "complete"
-                item.message = stats.get("message", "Compression complete")
-            except Exception as exc:
-                item.status = "error"
-                item.message = str(exc)[:300] or "Compression failed"
-            job.progress = int(((index + 1) / count) * 100)
-            job.progress_fine = float(job.progress)
-            job.detail = f"Finished {item.original_name} ({index + 1}/{count})"
+            if item.status == "complete":
+                job.detail = f"Finished {item.original_name} ({index + 1}/{count})"
+        job.progress = 100
+        job.progress_fine = 100.0
         if all(f.status == "error" for f in job.files):
             job.status = "error"
             job.error = "All files failed to process. Review the file-level error messages."
