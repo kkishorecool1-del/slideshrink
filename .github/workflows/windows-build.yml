@@ -1,0 +1,41 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install root dependencies (Electron + electron-builder)
+        run: npm install
+
+      - name: Build React frontend
+        run: npm run build:frontend
+
+      - name: Build Windows installer (NSIS)
+        run: npm run dist
+
+      - name: Upload setup.exe artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: slideshrink-windows-installer
+          path: release/*.exe
+          retention-days: 30

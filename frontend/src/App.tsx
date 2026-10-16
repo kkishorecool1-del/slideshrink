@@ -228,10 +228,8 @@ export default function App() {
     </header>
 
     <section className="hero" id="top">
-      <div className="eyebrow"><Sparkles size={14}/> A lighter way to present</div>
       <h1>Big ideas.<br/><span>Smaller files.</span></h1>
-      <p className="hero-copy">Reduce PowerPoint file sizes without rebuilding your slides. Your files stay on your Mac or trusted local network.</p>
-      <div className="trust-row"><span><ShieldCheck size={16}/> Original files stay untouched</span><span><Zap size={16}/> Batch-ready</span><span><HardDrive size={16}/> No cloud upload</span></div>
+      <p className="hero-copy">Compress PPTX files locally — originals untouched, batch-ready, no cloud upload.</p>
     </section>
 
     <section className="workspace">
@@ -284,6 +282,6 @@ export default function App() {
     </section>}
 
     <section className="how-section"><div className="section-heading"><div><span className="step-label">MADE FOR YOUR WORKFLOW</span><h2>Less file weight. Same big idea.</h2></div></div><div className="benefit-grid"><article><span><LockKeyhole size={19}/></span><h3>Private by design</h3><p>Runs on your Mac or trusted local network. No third-party file hosting is required.</p></article><article><span><Sparkles size={19}/></span><h3>Smart optimization</h3><p>Targets supported raster images while keeping other presentation assets unchanged.</p></article><article><span><FileCheck2 size={19}/></span><h3>Keep control</h3><p>Original files are never overwritten. Download a separate optimized copy and compare sizes.</p></article></div></section>
-    <footer><a className="footer-brand" href="#top">SlideShrink<span>.</span></a><span>Local-first PowerPoint optimization</span><span className="footer-version">v1.0 · PPTX only</span></footer>
+    <footer><a className="footer-brand" href="#top">SlideShrink<span>.</span></a><span>Local-first PowerPoint optimization</span><span className="footer-version">v1.0 · PPTX only</span><span className="footer-author">Kamal Kiishore | kkishore.cool@gmail.com</span></footer>
   </main>;
 }

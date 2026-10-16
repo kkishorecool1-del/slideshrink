@@ -1,0 +1,55 @@
+{
+  "name": "slideshrink",
+  "productName": "SlideShrink",
+  "version": "1.0.0",
+  "description": "Local-first PowerPoint (PPTX) compressor — Windows desktop application",
+  "main": "electron/main.js",
+  "scripts": {
+    "electron": "electron .",
+    "electron-dev": "ELECTRON_DEV=1 electron .",
+    "build:frontend": "cd frontend && npm ci && npm run build",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.slideshrink.app",
+    "productName": "SlideShrink",
+    "copyright": "Copyright © 2025 SlideShrink",
+    "directories": {
+      "app": ".",
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "backend/**/*",
+      "frontend/dist/**/*",
+      "package.json",
+      "!backend/.venv/**",
+      "!backend/data/**",
+      "!**/node_modules/**",
+      "!frontend/node_modules/**",
+      "!frontend/dist/**/*.map"
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SlideShrink",
+      "menuCategory": "SlideShrink"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "ia32"]
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

@@ -23,7 +23,13 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("SLIDESHRINK_DATA_DIR", str(APP_DIR.parent / "data"))).resolve()
+# On Windows, store job data under %LOCALAPPDATA% so it lands in a
+# user-writable location (Program Files is read-only for installed apps).
+if os.name == "nt":
+    _default_data_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SlideShrink" / "data"
+else:
+    _default_data_dir = APP_DIR.parent / "data"
+DATA_DIR = Path(os.environ.get("SLIDESHRINK_DATA_DIR", str(_default_data_dir))).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = int(os.environ.get("SLIDESHRINK_MAX_UPLOAD_BYTES", 100 * 1024 * 1024))
 MAX_FILES_PER_JOB = int(os.environ.get("SLIDESHRINK_MAX_FILES", 10))

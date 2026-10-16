@@ -53,6 +53,54 @@ npm run dev
 
 Open <http://localhost:5173>.
 
+## Install and run on Windows
+
+SlideShrink is packaged as a Windows desktop application (Electron) that bundles
+the Python backend and React frontend into a single window.
+
+### Requirements
+- Windows 10 or 11
+- Python 3.11+ (`python --version`)
+- Node.js 20+ (`node --version`)
+
+### Option 1: One-click desktop launcher (recommended)
+
+Double-click `start-slideshrink.bat` (or run `start-slideshrink.ps1` in
+PowerShell). It will:
+1. Install Electron
+2. Set up the Python backend (virtualenv + dependencies)
+3. Build the React frontend
+4. Launch the SlideShrink window
+
+When you close the window, the backend stops automatically.
+
+### Option 2: Run backend and frontend separately
+
+```powershell
+# Backend
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# Frontend (another terminal)
+cd frontend
+npm install
+npm run dev
+```
+Open http://localhost:5173.
+
+### Build a redistributable Windows installer
+
+```powershell
+npm install
+npm run build:frontend
+npm run dist
+```
+This produces an NSIS installer (`SlideShrink Setup x64.exe` / `.ia32.exe`) in
+the `release/` folder.
+
 ## LAN access from another device
 
 Only use this on a trusted private network. Do not expose the app directly to the public internet.

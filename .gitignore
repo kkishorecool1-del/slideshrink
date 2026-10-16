@@ -6,3 +6,9 @@ __pycache__/
 *.pyc
 .DS_Store
 *.log
+# Root (Electron) packaging
+node_modules/
+release/
+*.exe
+*.msi
+.env
